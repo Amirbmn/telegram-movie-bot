@@ -3,6 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.error import TelegramError
+import difflib
 
 # Logging
 logging.basicConfig(
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7863260940:AAGK7fCM8r7XZB1V-xS93Pz7cULEvzDotec"
 CHANNEL_USERNAME = "@amiramovie"
 BOT_USERNAME = "@AmirrrrrrrrrrMovieeeeeeeeeeBot"
-BOT_OWNER_ID = '530232458'
+BOT_OWNER_ID = 530232458  # Integer for consistency
 MOVIE_DATA_FILE = "movies.json"
 
 # JSON Functions
@@ -46,12 +47,21 @@ async def is_user_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # START command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await update.message.reply_text(
-        f"👋 Hello {user.first_name}!\n"
-        f"This bot shares movie links.\n\n"
-        f"Please make sure you're a member of our channel:\n{CHANNEL_USERNAME}\n\n"
-        "Then use /verify to unlock full access."
-    )
+    is_member = await is_user_member(update, context)
+    
+    if is_member:
+        await update.message.reply_text(
+            f"👋 Welcome, {user.first_name}!\n"
+            f"You're a member of {CHANNEL_USERNAME}.\n"
+            "Use /movie <movie_name> to get movie links."
+        )
+    else: 
+        await update.message.reply_text(
+            f"👋 Hello {user.first_name}!\n"
+            f"This bot shares movie links.\n\n"
+            f"Please join our channel: {CHANNEL_USERNAME}\n"
+            "Then use /verify to unlock full access."
+        )
 
 # VERIFY command
 async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60,7 +70,7 @@ async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_member:
         await update.message.reply_text(
             f"✅ Verified! Welcome, {user.first_name}.\n"
-            "Now you can use:\n/movie <movie name>"
+            "Now you can use /movie <movie_name> to get movie links."
         )
     else:
         await update.message.reply_text(
@@ -71,7 +81,10 @@ async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # MOVIE command
 async def movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_member(update, context):
-        await update.message.reply_text(f"🔒 Please join {CHANNEL_USERNAME} to access movie links.\nThen use /verify.")
+        await update.message.reply_text(
+            f"🔒 Please join {CHANNEL_USERNAME} to access movie links.\n"
+            "Then use /verify to unlock access."
+        )
         return
 
     if not context.args:
@@ -82,14 +95,29 @@ async def movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_movie_data()
     movie = next((m for m in data["movies"] if m["title"].lower() == movie_name), None)
 
-    if not movie:
-        await update.message.reply_text(f"❌ No movie found with the name '{movie_name}'.")
+    if movie:
+        text = f"🎬 *{movie['title']}* Download Links:\n\n"
+        for q in movie["qualities"]:
+            text += f"🔹 {q['quality']}: {q['url']}\n"
+        await update.message.reply_text(text, parse_mode="Markdown")
         return
 
-    text = f"🎬 *{movie['title']}* Download Links:\n\n"
-    for q in movie["qualities"]:
-        text += f"🔹 {q['quality']}: {q['url']}\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+    # Fuzzy matching for suggestions
+    movie_titles = [m["title"].lower() for m in data["movies"]]
+    close_matches = difflib.get_close_matches(movie_name, movie_titles, n=3, cutoff=0.6)
+    
+    if close_matches:
+        suggestions = "\n".join([f"- {data['movies'][movie_titles.index(match)]['title']}" for match in close_matches])
+        await update.message.reply_text(
+            f"❌ No movie found with the name '{movie_name}'.\n"
+            f"Did you mean one of these?\n{suggestions}\n\n"
+            "Please try again with the exact title."
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ No movie found with the name '{movie_name}'.\n"
+            "Check the spelling or try another movie."
+        )
 
 # ADDMOVIE command
 async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,7 +126,7 @@ async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) < 2:
-        await update.message.reply_text("Usage: /addmovie <movie_name> <quality1>:<url1> [<quality2>:<url2> ...]")
+        await update.message.reply_text("⚠️ Usage: /addmovie <movie_name> <quality1>:<url1> [<quality2>:<url2> ...]")
         return
 
     movie_name = context.args[0]

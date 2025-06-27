@@ -1,0 +1,42 @@
+{
+    "movies": [
+        {
+            "title": "the dark knight",
+            "qualities": [
+                {
+                    "quality": "480p",
+                    "url": "https://t.me/amiramovie/2"
+                },
+                {
+                    "quality": "1080p",
+                    "url": "https://example.com/inception1080p"
+                }
+            ]
+        },
+        {
+            "title": "Inception",
+            "qualities": [
+                {
+                    "quality": "480p",
+                    "url": "https://example.com"
+                }
+            ]
+        },
+		
+		     {
+            "title": "charlin chaplin the count",
+            "qualities": [
+                {
+                    "quality": "480p",
+                    "url": "https://archive.org/details/CC_1916_09_04_TheCount"
+                },
+                {
+                    "quality": "1080p",
+                    "url": "https://example.com/inception1080p"
+                }
+            ]
+        }
+		
+		
+    ]
+}
