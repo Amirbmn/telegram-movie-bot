@@ -49,19 +49,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     is_member = await is_user_member(update, context)
     
+    # Load movie data to display favorites
+    data = load_movie_data()
+    # Sort movies by rating (descending) and get top 3
+    top_movies = sorted(data["movies"], key=lambda x: x.get("rating", 0), reverse=True)[:3]
+    
+    # Favorites section
+    favorites_text = "🌟 *Top Favorite Movies*:\n"
+    if top_movies:
+        for i, movie in enumerate(top_movies, 1):
+            rating = movie.get("rating", 0)
+            favorites_text += f"{i}. {movie['title']} (Popularity: {rating})\n"
+    else:
+        favorites_text += "No popular movies yet. Start searching to build the list!\n"
+    
+    # Navigation section
+    navigation_text = (
+        "\n🔍 *Find Your Movie*:\n"
+        f"- Use `/movie <movie_name>` to search for a movie.\n"
+        f"- If suggestions appear, use `/confirm <number>` to select one.\n"
+        f"- Join our channel {CHANNEL_USERNAME} and use `/verify` to unlock access."
+    )
+    
+    # Combine sections
+    welcome_message = (
+        f"👋 Hello, {user.first_name}!\n"
+        f"Welcome to {BOT_USERNAME}, your movie link bot!\n\n"
+        f"{favorites_text}\n{navigation_text}"
+    )
+    
     if is_member:
-        await update.message.reply_text(
-            f"👋 Welcome, {user.first_name}!\n"
-            f"You're a member of {CHANNEL_USERNAME}.\n"
-            "Use /movie <movie_name> to get movie links."
-        )
-    else: 
-        await update.message.reply_text(
-            f"👋 Hello {user.first_name}!\n"
-            f"This bot shares movie links.\n\n"
-            f"Please join our channel: {CHANNEL_USERNAME}\n"
-            "Then use /verify to unlock full access."
-        )
+        welcome_message += "\nYou're a member! Start searching with /movie."
+    else:
+        welcome_message += f"\nPlease join {CHANNEL_USERNAME} and use /verify to unlock full access."
+    
+    await update.message.reply_text(welcome_message, parse_mode="Markdown")
 
 # VERIFY command
 async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,6 +118,10 @@ async def movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movie = next((m for m in data["movies"] if m["title"].lower() == movie_name), None)
 
     if movie:
+        # Increment rating
+        movie["rating"] = movie.get("rating", 0) + 1
+        save_movie_data(data)
+        
         text = f"🎬 *{movie['title']}* Download Links:\n\n"
         for q in movie["qualities"]:
             text += f"🔹 {q['quality']}: {q['url']}\n"
@@ -104,20 +130,70 @@ async def movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Fuzzy matching for suggestions
     movie_titles = [m["title"].lower() for m in data["movies"]]
-    close_matches = difflib.get_close_matches(movie_name, movie_titles, n=3, cutoff=0.6)
+    # Lower cutoff to capture more partial matches
+    close_matches = difflib.get_close_matches(movie_name, movie_titles, n=3, cutoff=0.4)
     
-    if close_matches:
-        suggestions = "\n".join([f"- {data['movies'][movie_titles.index(match)]['title']}" for match in close_matches])
+    # Additional substring matching for partial names
+    substring_matches = [title for title in movie_titles if movie_name in title]
+    # Combine and deduplicate matches, prioritizing substring matches
+    all_matches = list(dict.fromkeys(substring_matches + close_matches))
+    
+    if all_matches:
+        # Store suggestions in user context for /confirm
+        context.user_data["suggestions"] = [
+            data["movies"][movie_titles.index(match)] for match in all_matches
+        ]
+        suggestions = "\n".join(
+            f"{i+1}. {data['movies'][movie_titles.index(match)]['title']}"
+            for i, match in enumerate(all_matches)
+        )
         await update.message.reply_text(
-            f"❌ No movie found with the name '{movie_name}'.\n"
+            f"❌ No movie found with the exact name '{movie_name}'.\n"
             f"Did you mean one of these?\n{suggestions}\n\n"
-            "Please try again with the exact title."
+            f"Use /confirm <number> to select a movie (e.g., /confirm 1)."
         )
     else:
         await update.message.reply_text(
             f"❌ No movie found with the name '{movie_name}'.\n"
             "Check the spelling or try another movie."
         )
+
+# CONFIRM command
+async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_user_member(update, context):
+        await update.message.reply_text(
+            f"🔒 Please join {CHANNEL_USERNAME} to access movie links.\n"
+            "Then use /verify to unlock access."
+        )
+        return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("⚠️ Usage: /confirm <number>")
+        return
+
+    suggestion_index = int(context.args[0]) - 1
+    suggestions = context.user_data.get("suggestions", [])
+
+    if not suggestions or suggestion_index < 0 or suggestion_index >= len(suggestions):
+        await update.message.reply_text(
+            "❌ Invalid selection. Please use /movie <movie_name> to search again."
+        )
+        return
+
+    movie = suggestions[suggestion_index]
+    # Increment rating
+    for m in load_movie_data()["movies"]:
+        if m["title"].lower() == movie["title"].lower():
+            m["rating"] = m.get("rating", 0) + 1
+            break
+    save_movie_data(load_movie_data())
+    
+    text = f"🎬 *{movie['title']}* Download Links:\n\n"
+    for q in movie["qualities"]:
+        text += f"🔹 {q['quality']}: {q['url']}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+    # Clear suggestions after confirmation
+    context.user_data["suggestions"] = []
 
 # ADDMOVIE command
 async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,7 +224,8 @@ async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
             movie["qualities"].extend(qualities)
             break
     else:
-        data["movies"].append({"title": movie_name, "qualities": qualities})
+        # Initialize new movie with rating=0
+        data["movies"].append({"title": movie_name, "qualities": qualities, "rating": 0})
 
     save_movie_data(data)
     await update.message.reply_text(f"✅ Movie '{movie_name}' added/updated.")
@@ -160,6 +237,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("verify", verify))
     app.add_handler(CommandHandler("movie", movie))
+    app.add_handler(CommandHandler("confirm", confirm))
     app.add_handler(CommandHandler("addmovie", add_movie))
 
     logger.info("Bot is running...")
